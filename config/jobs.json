@@ -1,0 +1,17 @@
+{
+  "timezone": "Asia/Shanghai",
+  "jobs": [
+    {
+      "name": "DAS周报",
+      "enabled": true,
+      "cron": "0 9 * * 1",
+      "webhookEnv": "WECOM_WEBHOOK",
+      "reports": [
+        {
+          "type": "weekly-operations",
+          "detailLimit": 5
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "name": "wechat-group-chat-robot",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx src/index.ts --mode once --dry-run",
+    "once": "tsx src/index.ts --mode once",
+    "start": "tsx src/index.ts --mode schedule",
+    "check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "dayjs": "^1.11.13",
+    "dotenv": "^16.4.7",
+    "node-cron": "^3.0.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.5",
+    "@types/node-cron": "^3.0.11",
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.2"
+  }
+}
