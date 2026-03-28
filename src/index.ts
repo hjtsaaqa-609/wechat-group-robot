@@ -3,15 +3,17 @@ import { parseArgs } from "node:util";
 import cron from "node-cron";
 import dotenv from "dotenv";
 
-import { loadConfig, resolveWebhook } from "./lib/config.js";
+import { loadConfig, resolveChannel } from "./lib/config.js";
 import { DasClient } from "./lib/das-client.js";
 import { ReportStateStore } from "./lib/state.js";
 import { nowLabel } from "./lib/time.js";
-import { sendMarkdown } from "./lib/wecom.js";
+import { sendRenderedReport } from "./lib/wecom.js";
 import { buildReport } from "./reports/index.js";
 import type { JobConfig, ReportContext } from "./types.js";
 
 dotenv.config();
+
+const runningJobs = new Set<string>();
 
 type CliOptions = {
   mode: string;
@@ -60,6 +62,19 @@ async function main(): Promise<void> {
     cron.schedule(
       job.cron,
       async () => {
+        const delayMs = pickJitterDelayMs(job.jitterSeconds ?? 0);
+        if (delayMs > 0) {
+          console.log(`[schedule] 任务 ${job.name} 启用抖动，延迟 ${Math.round(delayMs / 1000)} 秒执行`);
+        }
+
+        await sleep(delayMs);
+
+        if (runningJobs.has(job.name)) {
+          console.warn(`[schedule] 任务已在运行中，跳过本次触发: ${job.name}`);
+          return;
+        }
+
+        runningJobs.add(job.name);
         try {
           await runSingleJob(job, {
             client,
@@ -72,6 +87,8 @@ async function main(): Promise<void> {
           const message =
             error instanceof Error ? error.message : "未知错误";
           console.error(`[job] 执行失败: ${job.name} | ${message}`);
+        } finally {
+          runningJobs.delete(job.name);
         }
       },
       {
@@ -158,11 +175,7 @@ async function runSingleJob(
 ): Promise<void> {
   const timezone = job.timezone ?? options.defaultTimezone;
   const executedAt = nowLabel(timezone);
-  const webhook = resolveWebhook(job);
-
-  if (!options.dryRun && !webhook) {
-    throw new Error(`任务 ${job.name} 缺少企业微信 webhook`);
-  }
+  const channel = options.dryRun ? null : resolveChannel(job);
 
   const context: ReportContext = {
     jobName: job.name,
@@ -195,7 +208,7 @@ async function runSingleJob(
         continue;
       }
 
-      await sendMarkdown(webhook!, rendered.markdown);
+      await sendRenderedReport(channel!, rendered);
       console.log(`[job] 已发送: ${job.name} | ${rendered.title}`);
     } catch (error) {
       failureCount += 1;
@@ -225,6 +238,18 @@ function requiredEnv(name: string): string {
     throw new Error(`缺少环境变量 ${name}`);
   }
   return value;
+}
+
+function pickJitterDelayMs(jitterSeconds: number): number {
+  if (jitterSeconds <= 0) {
+    return 0;
+  }
+
+  return Math.floor(Math.random() * jitterSeconds * 1000);
+}
+
+function sleep(delayMs: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, delayMs));
 }
 
 await main();

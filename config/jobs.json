@@ -4,8 +4,13 @@
     {
       "name": "DAS周报",
       "enabled": true,
-      "cron": "0 9 * * 1",
-      "webhookEnv": "WECOM_WEBHOOK",
+      "cron": "5 8 * * 1",
+      "jitterSeconds": 0,
+      "channel": {
+        "type": "internal-webhook",
+        "webhookEnv": "WECOM_WEBHOOK",
+        "maxMarkdownBytes": 2048
+      },
       "reports": [
         {
           "type": "weekly-operations",

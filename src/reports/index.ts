@@ -49,7 +49,9 @@ export async function buildReport(
 
     if (options?.persistState) {
       const dashboard = await client.fetchDashboardData();
-      const activePlatformRobotCount = dashboard.site.summary.robotCount;
+      const activePlatformRobotCount = (dashboard.robot.lifeCycleDistribution ?? [])
+        .filter((item) => item.label === "trialRun" || item.label === "formalOperation")
+        .reduce((sum, item) => sum + item.value, 0);
       const { resolveLastCompletedWeekRange } = await import("../lib/time.js");
       const range = resolveLastCompletedWeekRange(context.timezone);
       persistWeeklyOperationsState(

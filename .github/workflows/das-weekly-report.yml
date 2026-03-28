@@ -1,0 +1,76 @@
+name: DAS Weekly Report
+
+on:
+  workflow_dispatch:
+    inputs:
+      job_name:
+        description: "任务名称"
+        required: false
+        default: "DAS周报"
+      dry_run:
+        description: "仅预览，不发送"
+        required: false
+        type: boolean
+        default: false
+  schedule:
+    - cron: "5 0 * * 1"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: das-weekly-report
+  cancel-in-progress: false
+
+jobs:
+  run-report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      TZ: Asia/Shanghai
+      DAS_BASE_URL: http://das.i-pv.cn
+      DAS_USERNAME: ${{ secrets.DAS_USERNAME }}
+      DAS_PASSWORD: ${{ secrets.DAS_PASSWORD }}
+      WECOM_WEBHOOK: ${{ secrets.WECOM_WEBHOOK }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run weekly report
+        shell: bash
+        run: |
+          JOB_NAME="DAS周报"
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ inputs.job_name }}" ]; then
+            JOB_NAME="${{ inputs.job_name }}"
+          fi
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.dry_run }}" = "true" ]; then
+            npm run once -- --dry-run --job "$JOB_NAME"
+          else
+            npm run once -- --job "$JOB_NAME"
+          fi
+
+      - name: Commit state file
+        if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.dry_run) }}
+        shell: bash
+        run: |
+          if git diff --quiet -- data/report-state.json; then
+            echo "report-state.json 未变化，跳过提交"
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/report-state.json
+          git commit -m "chore: update DAS report state [skip ci]"
+          git push
