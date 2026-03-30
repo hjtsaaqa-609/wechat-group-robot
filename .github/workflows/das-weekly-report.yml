@@ -12,8 +12,14 @@ on:
         required: false
         type: boolean
         default: false
+      force_send:
+        description: "强制发送，即使当前统计周期已发送过"
+        required: false
+        type: boolean
+        default: false
   schedule:
-    - cron: "5 0 * * 1"
+    - cron: "23 0 * * *"
+    - cron: "47 0 * * *"
 
 permissions:
   contents: write
@@ -34,10 +40,10 @@ jobs:
       WECOM_WEBHOOK: ${{ secrets.WECOM_WEBHOOK }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: 22
           cache: npm
@@ -49,15 +55,20 @@ jobs:
         shell: bash
         run: |
           JOB_NAME="DAS周报"
+          FORCE_FLAG=""
 
           if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ inputs.job_name }}" ]; then
             JOB_NAME="${{ inputs.job_name }}"
           fi
 
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.force_send }}" = "true" ]; then
+            FORCE_FLAG="--force"
+          fi
+
           if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.dry_run }}" = "true" ]; then
-            npm run once -- --dry-run --job "$JOB_NAME"
+            npm run once -- --dry-run --job "$JOB_NAME" $FORCE_FLAG
           else
-            npm run once -- --job "$JOB_NAME"
+            npm run once -- --job "$JOB_NAME" $FORCE_FLAG
           fi
 
       - name: Commit state file

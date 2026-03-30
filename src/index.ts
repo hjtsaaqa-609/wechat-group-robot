@@ -6,7 +6,7 @@ import dotenv from "dotenv";
 import { loadConfig, resolveChannel } from "./lib/config.js";
 import { DasClient } from "./lib/das-client.js";
 import { ReportStateStore } from "./lib/state.js";
-import { nowLabel } from "./lib/time.js";
+import { nowLabel, resolveLastCompletedWeekRange } from "./lib/time.js";
 import { sendRenderedReport } from "./lib/wecom.js";
 import { buildReport } from "./reports/index.js";
 import type { JobConfig, ReportContext } from "./types.js";
@@ -19,6 +19,7 @@ type CliOptions = {
   mode: string;
   config: string;
   dryRun: boolean;
+  force: boolean;
   job?: string;
   runOnStart: boolean;
 };
@@ -49,6 +50,7 @@ async function main(): Promise<void> {
       stateStore,
       defaultTimezone,
       dryRun: options.dryRun,
+      force: options.force,
       baseUrl,
     });
     return;
@@ -81,6 +83,7 @@ async function main(): Promise<void> {
             stateStore,
             defaultTimezone,
             dryRun: options.dryRun,
+            force: options.force,
             baseUrl,
           });
         } catch (error) {
@@ -107,6 +110,7 @@ async function main(): Promise<void> {
       stateStore,
       defaultTimezone,
       dryRun: options.dryRun,
+      force: options.force,
       baseUrl,
     });
   }
@@ -129,6 +133,10 @@ function parseCliArgs(): CliOptions {
         type: "boolean",
         default: false,
       },
+      force: {
+        type: "boolean",
+        default: false,
+      },
       job: {
         type: "string",
       },
@@ -143,6 +151,7 @@ function parseCliArgs(): CliOptions {
     mode: parsed.values.mode,
     config: parsed.values.config,
     dryRun: parsed.values["dry-run"],
+    force: parsed.values.force,
     job: parsed.values.job,
     runOnStart: parsed.values["run-on-start"],
   };
@@ -155,6 +164,7 @@ async function runJobs(
     stateStore: ReportStateStore;
     defaultTimezone: string;
     dryRun: boolean;
+    force: boolean;
     baseUrl: string;
   },
 ): Promise<void> {
@@ -170,6 +180,7 @@ async function runSingleJob(
     stateStore: ReportStateStore;
     defaultTimezone: string;
     dryRun: boolean;
+    force: boolean;
     baseUrl: string;
   },
 ): Promise<void> {
@@ -190,13 +201,22 @@ async function runSingleJob(
   let failureCount = 0;
   for (const report of job.reports) {
     try {
-      const persistState = !options.dryRun && report.type === "weekly-operations";
+      if (
+        report.type === "weekly-operations" &&
+        !options.dryRun &&
+        !options.force &&
+        hasAlreadySentCurrentWeek(job.name, timezone, options.stateStore)
+      ) {
+        const currentPeriod = resolveLastCompletedWeekRange(timezone);
+        console.log(`[job] 当前统计周期已发送，跳过重复触发: ${job.name} | ${currentPeriod.label}`);
+        continue;
+      }
+
       const rendered = await buildReport(
         options.client,
         report,
         context,
         options.stateStore,
-        { persistState },
       );
       if (!rendered) {
         console.log(`[job] 跳过空报表: ${job.name} | ${report.type}`);
@@ -209,6 +229,14 @@ async function runSingleJob(
       }
 
       await sendRenderedReport(channel!, rendered);
+
+      if (report.type === "weekly-operations" && rendered.stateUpdate) {
+        options.stateStore.updateJobState(job.name, {
+          ...rendered.stateUpdate,
+          updatedAt: executedAt,
+        });
+      }
+
       console.log(`[job] 已发送: ${job.name} | ${rendered.title}`);
     } catch (error) {
       failureCount += 1;
@@ -230,6 +258,16 @@ function printPreview(jobName: string, report: { title: string; markdown: string
   console.log(report.markdown);
   console.log("=".repeat(80));
   console.log("");
+}
+
+function hasAlreadySentCurrentWeek(
+  jobName: string,
+  timezone: string,
+  stateStore: ReportStateStore,
+): boolean {
+  const currentPeriod = resolveLastCompletedWeekRange(timezone);
+  const state = stateStore.getJobState(jobName);
+  return state.lastPeriodLabel === currentPeriod.label;
 }
 
 function requiredEnv(name: string): string {

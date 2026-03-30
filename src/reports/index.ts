@@ -5,19 +5,13 @@ import type { RenderedReport, ReportConfig, ReportContext } from "../types.js";
 import { renderCleaningAnomaliesReport } from "./cleaning-anomalies.js";
 import { renderDashboardSummaryReport } from "./dashboard-summary.js";
 import { renderOperationsSummaryReport } from "./operations-summary.js";
-import {
-  persistWeeklyOperationsState,
-  renderWeeklyOperationsReport,
-} from "./weekly-operations.js";
+import { renderWeeklyOperationsReport } from "./weekly-operations.js";
 
 export async function buildReport(
   client: DasClient,
   report: ReportConfig,
   context: ReportContext,
   stateStore?: ReportStateStore,
-  options?: {
-    persistState?: boolean;
-  },
 ): Promise<RenderedReport | null> {
   if (report.type === "dashboard-summary") {
     const dashboard = await client.fetchDashboardData();
@@ -40,30 +34,12 @@ export async function buildReport(
       throw new Error("weekly-operations 报表缺少状态存储");
     }
 
-    const rendered = await renderWeeklyOperationsReport(
+    return renderWeeklyOperationsReport(
       client,
       context,
       stateStore,
       report.detailLimit ?? 5,
     );
-
-    if (options?.persistState) {
-      const dashboard = await client.fetchDashboardData();
-      const activePlatformRobotCount = (dashboard.robot.lifeCycleDistribution ?? [])
-        .filter((item) => item.label === "trialRun" || item.label === "formalOperation")
-        .reduce((sum, item) => sum + item.value, 0);
-      const { resolveLastCompletedWeekRange } = await import("../lib/time.js");
-      const range = resolveLastCompletedWeekRange(context.timezone);
-      persistWeeklyOperationsState(
-        context.jobName,
-        activePlatformRobotCount,
-        range.label,
-        context.executedAt,
-        stateStore,
-      );
-    }
-
-    return rendered;
   }
 
   const range = resolveDateRange(report.range ?? "today", context.timezone);

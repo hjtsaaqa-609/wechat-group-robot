@@ -87,6 +87,11 @@ export type AppConfig = {
   jobs: JobConfig[];
 };
 
+export type ReportStateUpdate = {
+  lastPlatformRobotCount?: number;
+  lastPeriodLabel?: string;
+};
+
 export type DateRange = {
   preset: RangePreset;
   label: string;
@@ -97,6 +102,7 @@ export type DateRange = {
 export type RenderedReport = {
   title: string;
   markdown: string;
+  stateUpdate?: ReportStateUpdate;
 };
 
 export type ReportContext = {

@@ -88,21 +88,11 @@ export async function renderWeeklyOperationsReport(
   return {
     title: `运营周报（${range.label}）`,
     markdown: lines.join("\n"),
+    stateUpdate: {
+      lastPlatformRobotCount: currentPlatformRobotCount,
+      lastPeriodLabel: range.label,
+    },
   };
-}
-
-export function persistWeeklyOperationsState(
-  clientReportTitle: string,
-  currentPlatformRobotCount: number,
-  rangeLabel: string,
-  executedAt: string,
-  stateStore: ReportStateStore,
-): void {
-  stateStore.updateJobState(clientReportTitle, {
-    lastPlatformRobotCount: currentPlatformRobotCount,
-    lastPeriodLabel: rangeLabel,
-    updatedAt: executedAt,
-  });
 }
 
 function sumFaultLevel(
