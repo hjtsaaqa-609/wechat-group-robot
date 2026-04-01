@@ -56,7 +56,59 @@ export type ProjectStatsResponse = {
     issueRate: number;
     averageDailySiteStaff: number;
     soloLogCount: number;
+    outgoingYieldMonth?: string;
+    outgoingYieldRate?: number | null;
+    outgoingYieldShippedCount?: number;
+    outgoingYieldDefectCount?: number;
+    outgoingYieldGoodCount?: number;
+    shippingAccuracyMonth?: string;
+    shippingAccuracyRate?: number | null;
+    shippingAccuracyOrderCount?: number;
+    shippingAccuracyErrorCount?: number;
+    shippingAccuracyCorrectCount?: number;
   };
+  quality?: {
+    year: number;
+    windowDays: number;
+    installOnceSuccess: QualityMetric;
+    opsSuccess: QualityMetric;
+    productionOutgoingYield: {
+      currentMonth: ProductionYieldSnapshot;
+      yearToDate: ProductionYieldSnapshot;
+      trend: ProductionYieldSnapshot[];
+    };
+    productionShippingAccuracy: {
+      currentMonth: ShippingAccuracySnapshot;
+      yearToDate: ShippingAccuracySnapshot;
+      trend: ShippingAccuracySnapshot[];
+    };
+  };
+};
+
+export type QualityMetric = {
+  label: string;
+  targetRate: number;
+  actualRate: number;
+  successCount: number;
+  totalCount: number;
+  failureCount: number;
+  grade: string;
+};
+
+export type ProductionYieldSnapshot = {
+  label: string;
+  shippedCount: number;
+  defectCount: number;
+  goodCount: number;
+  yieldRate: number | null;
+};
+
+export type ShippingAccuracySnapshot = {
+  label: string;
+  orderCount: number;
+  errorCount: number;
+  correctCount: number;
+  accuracyRate: number | null;
 };
 
 export type DashboardData = {
@@ -253,6 +305,54 @@ export type PowerBoostResponse = {
   }>;
 };
 
+export type BusinessStatsResponse = {
+  summary: {
+    totalRobots: number;
+    formalOperation: number;
+    trialRun: number;
+    suspendedWorking: number;
+    maintenance: number;
+    scrapped: number;
+  };
+  statusDistribution: Array<{
+    status: string;
+    label: string;
+    count: number;
+  }>;
+};
+
+export type CustomerComplaintsResponse = {
+  summary: {
+    complaintCount: number;
+    customerCount: number;
+    siteCount: number;
+  };
+};
+
+export type InspectionStatsResponse = {
+  summary: {
+    taskCount: number;
+    inspectedCount: number;
+    inspectingCount: number;
+    waitingCount: number;
+    abortedCount: number;
+    completionRate: number;
+    totalInspectionArea: number;
+    totalTargetArea: number;
+    photoCount: number;
+    savedPhotoCount: number;
+    photoPerMw: number;
+    abnormalPhotoCount: number;
+    abnormalModuleCount: number;
+    clearedModuleCount: number;
+    abnormalModuleClearRate: number;
+    totalModuleCount: number;
+    severeAbnormalModuleCount: number;
+    severeAbnormalModuleRatio: number;
+    avgCleanliness: number;
+  };
+};
+
 type JsonEnvelope<T> = {
   code: string;
   message?: string;
@@ -290,6 +390,28 @@ export class DasClient {
 
   async fetchOperationsReport(range: DateRange): Promise<OperationsReport> {
     return this.getJson<OperationsReport>("/api/stat-reports", {
+      start_at: range.startAt,
+      end_at: range.endAt,
+    });
+  }
+
+  async fetchBusinessStats(): Promise<BusinessStatsResponse> {
+    return this.getJson<BusinessStatsResponse>("/api/business-stats");
+  }
+
+  async fetchCustomerComplaints(range: DateRange): Promise<CustomerComplaintsResponse> {
+    return this.getJson<CustomerComplaintsResponse>("/api/customer-complaints", {
+      start_at: range.startAt,
+      end_at: range.endAt,
+    });
+  }
+
+  async fetchProjectStats(): Promise<ProjectStatsResponse> {
+    return this.getJson<ProjectStatsResponse>("/api/project-stats");
+  }
+
+  async fetchInspectionStats(range: DateRange): Promise<InspectionStatsResponse> {
+    return this.getJson<InspectionStatsResponse>("/api/inspection-stats", {
       start_at: range.startAt,
       end_at: range.endAt,
     });

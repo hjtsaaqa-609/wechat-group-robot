@@ -71,3 +71,16 @@ export function resolveLastCompletedWeekRange(timezone: string): DateRange {
     endAt: end.toISOString(),
   };
 }
+
+export function resolveYearToDateRange(timezone: string): DateRange {
+  const now = dayjs().tz(timezone);
+  const start = now.startOf("year");
+  const end = now.endOf("day");
+
+  return {
+    preset: "last30days",
+    label: `${start.format("YYYY-MM-DD")}~${end.format("YYYY-MM-DD")}`,
+    startAt: start.toISOString(),
+    endAt: end.toISOString(),
+  };
+}

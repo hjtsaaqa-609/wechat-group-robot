@@ -1,98 +1,189 @@
-import type {
-  DasClient,
-  PowerBoostResponse,
-  TodoListItem,
-  TodoStatsResponse,
-} from "../lib/das-client.js";
+import type { DasClient } from "../lib/das-client.js";
 import {
   formatDays,
   formatNumber,
-  parseRobotCountFromText,
-  truncate,
+  formatPercent,
 } from "../lib/format.js";
-import { resolveLastCompletedWeekRange } from "../lib/time.js";
+import { resolveLastCompletedWeekRange, resolveYearToDateRange } from "../lib/time.js";
 import type { RenderedReport, ReportContext } from "../types.js";
 import { ReportStateStore } from "../lib/state.js";
+
+const KPI_TARGETS = {
+  companyRobotCount: 1000,
+  yearlyComplaintCount: 12,
+  outgoingYieldRate: 0.99,
+  shippingAccuracyRate: 0.995,
+  takeoverPerGw: 3,
+  onsiteMaintenancePerGw: 7,
+  brushReplacementPerGw: 12,
+  levelThreeFaultCount: 1,
+  abnormalModuleClearRate: 0.9,
+  belowExpectedBoostRate: 0.1,
+  installSuccessRate: 0.99,
+  opsSuccessRate: 0.98,
+  brushBacklogDays: 14,
+  pendingFaultDays: 7,
+} as const;
 
 export async function renderWeeklyOperationsReport(
   client: DasClient,
   context: ReportContext,
-  stateStore: ReportStateStore,
-  detailLimit = 5,
+  _stateStore: ReportStateStore,
+  _detailLimit = 5,
 ): Promise<RenderedReport> {
-  const range = resolveLastCompletedWeekRange(context.timezone);
+  const weekRange = resolveLastCompletedWeekRange(context.timezone);
+  const yearRange = resolveYearToDateRange(context.timezone);
+
   const [
-    dashboard,
+    business,
+    complaints,
+    project,
     operations,
-    fieldTodos,
-    todoStats,
-    todoList,
+    inspection,
     powerBoost,
-    cleaningQuality,
+    fieldTodos,
   ] = await Promise.all([
-    client.fetchDashboardData(),
-    client.fetchOperationsReport(range),
+    client.fetchBusinessStats(),
+    client.fetchCustomerComplaints(yearRange),
+    client.fetchProjectStats(),
+    client.fetchOperationsReport(weekRange),
+    client.fetchInspectionStats(weekRange),
+    client.fetchPowerBoost(weekRange),
     client.fetchFieldTodos(),
-    client.fetchTodoStats(range),
-    client.fetchTodoList(range),
-    client.fetchPowerBoost(range),
-    client.fetchCleaningQuality(range),
   ]);
 
-  const currentPlatformRobotCount = (dashboard.robot.lifeCycleDistribution ?? [])
-    .filter((item) => item.label === "trialRun" || item.label === "formalOperation")
-    .reduce((sum, item) => sum + item.value, 0);
-  const previousState = stateStore.getJobState(context.jobName);
-  const robotDelta =
-    typeof previousState.lastPlatformRobotCount === "number"
-      ? currentPlatformRobotCount - previousState.lastPlatformRobotCount
-      : null;
-
-  const levelOneCount = sumFaultLevel(operations.faultCategoryByLevel, "1");
-  const levelTwoCount = sumFaultLevel(operations.faultCategoryByLevel, "2");
-  const levelTwoDetail = summarizeFaultDetails(
-    operations.faultCategoryByLevel.find((item) => item.level === "2")?.data ?? [],
-  );
-
-  const weeklyBrushBacklog = summarizeWeeklyBrushBacklog(todoList.items);
+  const currentPlatformRobotCount =
+    business.summary.trialRun + business.summary.formalOperation;
+  const levelThreeCount = sumFaultLevel(operations.faultCategoryByLevel, "3");
+  const cleaningInspectionBacklog = fieldTodos.summary.todoCount;
+  const brushBacklogDays = fieldTodos.summary.todoAvgDurationHours / 24;
   const pendingFaultDays = fieldTodos.summary.faultAvgDurationHours / 24;
-  const backlogBrushDays = fieldTodos.summary.todoAvgDurationHours / 24;
+
+  const projectQuality = project.quality;
+  if (!projectQuality) {
+    throw new Error("项目质量统计缺失，无法生成 KPI 周报");
+  }
 
   const lines = [
-    `<font color="info">[${context.jobName}] 运营周报</font>`,
-    `统计周期：${range.label}`,
+    `<font color="info">[${context.jobName}] 经营周报</font>`,
+    `统计周期：${weekRange.label}`,
     `发送时间：${context.executedAt}`,
+    `统计说明：周报指标按自然周统计，投诉按年度累计统计`,
     "",
-    `平台机器人数量（台）：${formatNumber(currentPlatformRobotCount)}`,
-    `机器人变化数量（台）：${formatSignedNumber(robotDelta)}`,
-    `毛刷老化待更换（台）：${formatNumber(weeklyBrushBacklog)}`,
-    `毛刷老化平均持续时间：${formatDays(backlogBrushDays)} 天`,
-    `新增 1 级故障（条）：${formatNumber(levelOneCount)}`,
-    `新增 2 级故障（条）：${formatNumber(levelTwoCount)}`,
-    `新增 2 级故障详情：${levelTwoDetail || "-"}`,
-    `待处理 2 级故障（条）：${formatNumber(fieldTodos.summary.faultCount)}`,
-    `待处理 2 级故障平均持续时间（天）：${formatDays(pendingFaultDays)} 天`,
-    `发电量提升低于预期：${formatNumber(powerBoost.summary.belowExpectedSiteCount)}`,
-    `发电量提升低于预期详情：${summarizeSiteNames(powerBoost, detailLimit)}`,
-    `客户投诉（台）：-`,
-    `投诉详情：-`,
-    `投诉响应时间：-`,
-    `客户表扬（台）：-`,
-    `表扬详情：-`,
+    section("公司整体"),
+    formatCountKpi(
+      "机器人累计上线",
+      currentPlatformRobotCount,
+      KPI_TARGETS.companyRobotCount,
+      "台",
+    ),
+    `口径：试运行 ${formatNumber(business.summary.trialRun)} + 正式运营 ${formatNumber(business.summary.formalOperation)}`,
     "",
-    `补充口径：`,
-    `当前参与清扫质量统计电站 ${formatNumber(cleaningQuality.summary.participatingSiteCount)} 座，未达预期 ${formatNumber(cleaningQuality.summary.belowExpectedSiteCount)} 座`,
-    `周内清扫质量巡查待办 ${formatNumber(extractTodoTypeCount(todoStats, "cleaningQualityInspection"))} 条`,
+    section("客户满意度"),
+    formatThresholdCountKpi(
+      "年度累计投诉数量",
+      complaints.summary.complaintCount,
+      KPI_TARGETS.yearlyComplaintCount,
+      "次",
+      "<",
+    ),
+    "",
+    section("市场销售部"),
+    formatCountKpi(
+      "机器人累计上线",
+      currentPlatformRobotCount,
+      KPI_TARGETS.companyRobotCount,
+      "台",
+    ),
+    "",
+    section("生产部"),
+    formatThresholdPercentKpi(
+      "出厂良品率",
+      projectQuality.productionOutgoingYield.yearToDate.yieldRate,
+      KPI_TARGETS.outgoingYieldRate,
+      ">=",
+    ),
+    formatThresholdPercentKpi(
+      "发货正确率",
+      projectQuality.productionShippingAccuracy.yearToDate.accuracyRate,
+      KPI_TARGETS.shippingAccuracyRate,
+      ">=",
+    ),
+    "",
+    section("研发部"),
+    formatThresholdNumberKpi(
+      "每GW远程接管次数",
+      operations.summary.takeoverCountPerGW,
+      KPI_TARGETS.takeoverPerGw,
+      "<=",
+    ),
+    formatThresholdNumberKpi(
+      "每GW现场维护次数",
+      operations.summary.onsiteMaintenanceCountPerGW,
+      KPI_TARGETS.onsiteMaintenancePerGw,
+      "<=",
+    ),
+    formatThresholdNumberKpi(
+      "每GW毛刷更换次数",
+      operations.summary.consumableReplacementCountPerGW,
+      KPI_TARGETS.brushReplacementPerGw,
+      "<=",
+    ),
+    "",
+    section("运营部"),
+    formatThresholdCountKpi(
+      "新增3级故障数",
+      levelThreeCount,
+      KPI_TARGETS.levelThreeFaultCount,
+      "次",
+      "<=",
+    ),
+    formatThresholdPercentKpi(
+      "异常组件解决率",
+      inspection.summary.abnormalModuleClearRate,
+      KPI_TARGETS.abnormalModuleClearRate,
+      ">=",
+    ),
+    formatThresholdPercentKpi(
+      "发电量未达预期率",
+      powerBoost.summary.belowExpectedRatio,
+      KPI_TARGETS.belowExpectedBoostRate,
+      "<=",
+    ),
+    "",
+    section("项目部-质量目标"),
+    formatThresholdPercentKpi(
+      "安装一次成功率",
+      projectQuality.installOnceSuccess.actualRate,
+      KPI_TARGETS.installSuccessRate,
+      ">=",
+    ),
+    formatThresholdPercentKpi(
+      "运维成功率",
+      projectQuality.opsSuccess.actualRate,
+      KPI_TARGETS.opsSuccessRate,
+      ">=",
+    ),
+    "",
+    section("项目部-时效目标"),
+    `清扫质量巡检待办（涉及机器人）：${formatNumber(cleaningInspectionBacklog)}`,
+    `清扫质量平均持续时间：${formatDays(brushBacklogDays)} 天（目标 <= ${formatNumber(KPI_TARGETS.brushBacklogDays)}天）`,
+    `待处理2级故障（条）：${formatNumber(fieldTodos.summary.faultCount)}`,
+    `待处理2级故障平均持续时间（天）：${formatDays(pendingFaultDays)} 天（目标 <= ${formatNumber(KPI_TARGETS.pendingFaultDays)}天）`,
   ];
 
   return {
-    title: `运营周报（${range.label}）`,
+    title: `经营周报（${weekRange.label}）`,
     markdown: lines.join("\n"),
     stateUpdate: {
       lastPlatformRobotCount: currentPlatformRobotCount,
-      lastPeriodLabel: range.label,
+      lastPeriodLabel: weekRange.label,
     },
   };
+}
+
+function section(title: string): string {
+  return `<font color="info">${title}</font>`;
 }
 
 function sumFaultLevel(
@@ -103,55 +194,41 @@ function sumFaultLevel(
   return (level?.data ?? []).reduce((sum, item) => sum + item.value, 0);
 }
 
-function summarizeFaultDetails(
-  items: Array<{ name: string; value: number }>,
+function formatCountKpi(
+  label: string,
+  actual: number,
+  target: number,
+  unit: string,
 ): string {
-  if (items.length === 0) {
-    return "";
-  }
-
-  return items
-    .map((item) => {
-      const label = item.name.includes("-")
-        ? item.name.split("-").at(-1) ?? item.name
-        : item.name;
-      return `${formatNumber(item.value)}台${label}`;
-    })
-    .join("、");
+  const progress = target > 0 ? `${formatPercent(actual / target, 1)}` : "--";
+  return `${label}：${formatNumber(actual)} ${unit} / ${formatNumber(target)} ${unit}（达成 ${progress}）`;
 }
 
-function summarizeWeeklyBrushBacklog(items: TodoListItem[]): number {
-  return items
-    .filter(
-      (item) =>
-        item.type === "cleaningQualityInspection" && String(item.name).includes("毛刷"),
-    )
-    .reduce((sum, item) => sum + parseRobotCountFromText(item.name), 0);
-}
-
-function summarizeSiteNames(
-  powerBoost: PowerBoostResponse,
-  limit: number,
+function formatThresholdCountKpi(
+  label: string,
+  actual: number,
+  target: number,
+  unit: string,
+  operator: "<" | "<=" | ">=",
 ): string {
-  const names = powerBoost.belowExpectedSites
-    .slice(0, limit)
-    .map((item) => truncate(item.siteName, 18));
-
-  return names.length > 0 ? names.join("、") : "-";
+  return `${label}：${formatNumber(actual)} ${unit}（目标 ${operator} ${formatNumber(target)} ${unit}）`;
 }
 
-function extractTodoTypeCount(data: TodoStatsResponse, type: string): number {
-  return data.typeDistribution.find((item) => item.label === type)?.value ?? 0;
+function formatThresholdNumberKpi(
+  label: string,
+  actual: number,
+  target: number,
+  operator: "<=" | ">=",
+): string {
+  return `${label}：${formatNumber(actual, 2)}（目标 ${operator} ${formatNumber(target, 2)}）`;
 }
 
-function formatSignedNumber(value: number | null): string {
-  if (value === null) {
-    return "-";
-  }
-
-  if (value > 0) {
-    return `+${formatNumber(value)}`;
-  }
-
-  return formatNumber(value);
+function formatThresholdPercentKpi(
+  label: string,
+  actual: number | null,
+  target: number,
+  operator: "<=" | ">=",
+): string {
+  const actualText = actual === null ? "--" : formatPercent(actual, 2);
+  return `${label}：${actualText}（目标 ${operator} ${formatPercent(target, 2)}）`;
 }
