@@ -36,20 +36,20 @@ export async function renderWeeklyOperationsReport(
 
   const [
     business,
-    complaints,
     project,
     operations,
-    inspection,
-    powerBoost,
     fieldTodos,
   ] = await Promise.all([
     client.fetchBusinessStats(),
-    client.fetchCustomerComplaints(yearRange),
     client.fetchProjectStats(),
     client.fetchOperationsReport(weekRange),
-    client.fetchInspectionStats(weekRange),
-    client.fetchPowerBoost(weekRange),
     client.fetchFieldTodos(),
+  ]);
+
+  const [complaints, inspection, powerBoost] = await Promise.all([
+    fetchOptional("年度累计投诉数量", () => client.fetchCustomerComplaints(yearRange)),
+    fetchOptional("异常组件解决率", () => client.fetchInspectionStats(weekRange)),
+    fetchOptional("发电量未达预期率", () => client.fetchPowerBoost(weekRange)),
   ]);
 
   const currentPlatformRobotCount =
@@ -82,7 +82,7 @@ export async function renderWeeklyOperationsReport(
     section("客户满意度"),
     formatThresholdCountKpi(
       "年度累计投诉数量",
-      complaints.summary.complaintCount,
+      complaints?.summary.complaintCount ?? null,
       KPI_TARGETS.yearlyComplaintCount,
       "次",
       "<",
@@ -140,13 +140,13 @@ export async function renderWeeklyOperationsReport(
     ),
     formatThresholdPercentKpi(
       "异常组件解决率",
-      inspection.summary.abnormalModuleClearRate,
+      inspection?.summary.abnormalModuleClearRate ?? null,
       KPI_TARGETS.abnormalModuleClearRate,
       ">=",
     ),
     formatThresholdPercentKpi(
       "发电量未达预期率",
-      powerBoost.summary.belowExpectedRatio,
+      powerBoost?.summary.belowExpectedRatio ?? null,
       KPI_TARGETS.belowExpectedBoostRate,
       "<=",
     ),
@@ -206,12 +206,13 @@ function formatCountKpi(
 
 function formatThresholdCountKpi(
   label: string,
-  actual: number,
+  actual: number | null,
   target: number,
   unit: string,
   operator: "<" | "<=" | ">=",
 ): string {
-  return `${label}：${formatNumber(actual)} ${unit}（目标 ${operator} ${formatNumber(target)} ${unit}）`;
+  const actualText = actual === null ? "--" : `${formatNumber(actual)} ${unit}`;
+  return `${label}：${actualText}（目标 ${operator} ${formatNumber(target)} ${unit}）`;
 }
 
 function formatThresholdNumberKpi(
@@ -231,4 +232,17 @@ function formatThresholdPercentKpi(
 ): string {
   const actualText = actual === null ? "--" : formatPercent(actual, 2);
   return `${label}：${actualText}（目标 ${operator} ${formatPercent(target, 2)}）`;
+}
+
+async function fetchOptional<T>(
+  label: string,
+  loader: () => Promise<T>,
+): Promise<T | null> {
+  try {
+    return await loader();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn(`[weekly-operations] 可选指标降级为 -- : ${label} | ${message}`);
+    return null;
+  }
 }

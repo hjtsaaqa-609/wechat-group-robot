@@ -483,16 +483,43 @@ export class DasClient {
   }
 
   private async requestJson<T>(path: string, init?: RequestInit): Promise<T> {
-    const response = await fetch(new URL(path, this.baseUrl), init);
-    if (!response.ok) {
-      throw new Error(`DAS 请求失败: ${response.status} ${response.statusText}`);
+    const method = init?.method ?? "GET";
+    const maxAttempts = method === "GET" ? 3 : 1;
+
+    let lastError: Error | null = null;
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      try {
+        const response = await fetch(new URL(path, this.baseUrl), init);
+        if (!response.ok) {
+          const message = `DAS 请求失败: ${method} ${path} | ${response.status} ${response.statusText}`;
+          if (method === "GET" && response.status >= 500 && attempt < maxAttempts) {
+            await sleep(attempt * 500);
+            continue;
+          }
+
+          throw new Error(message);
+        }
+
+        const payload = (await response.json()) as JsonEnvelope<T>;
+        if (payload.code !== "000000") {
+          throw new Error(`DAS 返回失败: ${method} ${path} | ${payload.message ?? payload.code}`);
+        }
+
+        return payload.data;
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+        if (attempt >= maxAttempts) {
+          break;
+        }
+
+        await sleep(attempt * 500);
+      }
     }
 
-    const payload = (await response.json()) as JsonEnvelope<T>;
-    if (payload.code !== "000000") {
-      throw new Error(payload.message ?? "DAS 返回失败");
-    }
-
-    return payload.data;
+    throw lastError ?? new Error(`DAS 请求失败: ${method} ${path}`);
   }
+}
+
+function sleep(delayMs: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, delayMs));
 }
