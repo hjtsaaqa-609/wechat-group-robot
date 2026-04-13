@@ -3,6 +3,7 @@ import {
   formatDays,
   formatNumber,
   formatPercent,
+  toCleaningMw,
 } from "../lib/format.js";
 import { resolveLastCompletedWeekRange, resolveYearToDateRange } from "../lib/time.js";
 import type { RenderedReport, ReportContext } from "../types.js";
@@ -38,12 +39,16 @@ export async function renderWeeklyOperationsReport(
     business,
     project,
     operations,
+    faultOperations,
     fieldTodos,
+    todoList,
   ] = await Promise.all([
     client.fetchBusinessStats(),
     client.fetchProjectStats(),
     client.fetchOperationsReport(weekRange),
+    client.fetchFaultOperationsReport(weekRange),
     client.fetchFieldTodos(),
+    client.fetchTodoList(weekRange),
   ]);
 
   const [complaints, inspection, powerBoost] = await Promise.all([
@@ -54,10 +59,27 @@ export async function renderWeeklyOperationsReport(
 
   const currentPlatformRobotCount =
     business.summary.trialRun + business.summary.formalOperation;
-  const levelThreeCount = sumFaultLevel(operations.faultCategoryByLevel, "3");
+  const levelThreeCount = sumFaultLevel(faultOperations.faultCategoryByLevel, "3");
   const cleaningInspectionBacklog = fieldTodos.summary.todoCount;
   const brushBacklogDays = fieldTodos.summary.todoAvgDurationHours / 24;
   const pendingFaultDays = fieldTodos.summary.faultAvgDurationHours / 24;
+  const derivedKpis = deriveWeeklyPerGwKpis(operations.summary.monthlyCleaningArea, {
+    fieldFaults: fieldTodos.faults,
+    todoItems: todoList.items,
+    range: weekRange,
+  });
+  const takeoverCountPerGw =
+    faultOperations.summary.takeoverCountPerGW > 0
+      ? faultOperations.summary.takeoverCountPerGW
+      : derivedKpis.takeoverCountPerGw;
+  const onsiteMaintenanceCountPerGw =
+    faultOperations.summary.onsiteMaintenanceCountPerGW > 0
+      ? faultOperations.summary.onsiteMaintenanceCountPerGW
+      : derivedKpis.onsiteMaintenanceCountPerGw;
+  const consumableReplacementCountPerGw =
+    faultOperations.summary.consumableReplacementCountPerGW > 0
+      ? faultOperations.summary.consumableReplacementCountPerGW
+      : derivedKpis.consumableReplacementCountPerGw;
 
   const projectQuality = project.quality;
   if (!projectQuality) {
@@ -113,19 +135,19 @@ export async function renderWeeklyOperationsReport(
     section("研发部"),
     formatThresholdNumberKpi(
       "每GW远程接管次数",
-      operations.summary.takeoverCountPerGW,
+      takeoverCountPerGw,
       KPI_TARGETS.takeoverPerGw,
       "<=",
     ),
     formatThresholdNumberKpi(
       "每GW现场维护次数",
-      operations.summary.onsiteMaintenanceCountPerGW,
+      onsiteMaintenanceCountPerGw,
       KPI_TARGETS.onsiteMaintenancePerGw,
       "<=",
     ),
     formatThresholdNumberKpi(
       "每GW毛刷更换次数",
-      operations.summary.consumableReplacementCountPerGW,
+      consumableReplacementCountPerGw,
       KPI_TARGETS.brushReplacementPerGw,
       "<=",
     ),
@@ -245,4 +267,83 @@ async function fetchOptional<T>(
     console.warn(`[weekly-operations] 可选指标降级为 -- : ${label} | ${message}`);
     return null;
   }
+}
+
+function deriveWeeklyPerGwKpis(
+  cleaningArea: number,
+  inputs: {
+    fieldFaults: Array<{ level: string; startAt: string }>;
+    todoItems: Array<{
+      type: string;
+      status: string;
+      name: string;
+      createdAt: string;
+      processedAt: string | null;
+    }>;
+    range: { startAt: string; endAt: string };
+  },
+): {
+  takeoverCountPerGw: number;
+  onsiteMaintenanceCountPerGw: number;
+  consumableReplacementCountPerGw: number;
+} {
+  const cleanedGw = toCleaningMw(cleaningArea) / 1000;
+  if (!Number.isFinite(cleanedGw) || cleanedGw <= 0) {
+    return {
+      takeoverCountPerGw: 0,
+      onsiteMaintenanceCountPerGw: 0,
+      consumableReplacementCountPerGw: 0,
+    };
+  }
+
+  const takeoverCount = inputs.todoItems.filter(
+    (item) =>
+      item.type === "faultHandling" && isWithinRange(item.createdAt, inputs.range),
+  ).length;
+  const onsiteMaintenanceCount = inputs.fieldFaults.filter(
+    (item) => item.level === "2" && isWithinRange(item.startAt, inputs.range),
+  ).length;
+  const consumableReplacementCount = inputs.todoItems
+    .filter(
+      (item) =>
+        item.type === "cleaningQualityInspection" &&
+        item.status === "processed" &&
+        item.processedAt !== null &&
+        isWithinRange(item.processedAt, inputs.range),
+    )
+    .reduce((sum, item) => sum + parseBrushReplacementCount(item.name), 0);
+
+  return {
+    takeoverCountPerGw: takeoverCount / cleanedGw,
+    onsiteMaintenanceCountPerGw: onsiteMaintenanceCount / cleanedGw,
+    consumableReplacementCountPerGw: consumableReplacementCount / cleanedGw,
+  };
+}
+
+function isWithinRange(
+  value: string,
+  range: { startAt: string; endAt: string },
+): boolean {
+  const target = Date.parse(value);
+  const start = Date.parse(range.startAt);
+  const end = Date.parse(range.endAt);
+
+  return Number.isFinite(target) && target >= start && target <= end;
+}
+
+function parseBrushReplacementCount(text: string): number {
+  const explicitCount = text.match(/(?:共)?\s*(\d+)\s*(?:台|条)/);
+  if (explicitCount) {
+    return Number(explicitCount[1]);
+  }
+
+  const robotMentions = new Set<string>();
+  for (const match of text.matchAll(/(\d+-\d+|\d+号(?:机|机器人))/g)) {
+    robotMentions.add(match[1]);
+  }
+  if (robotMentions.size > 0) {
+    return robotMentions.size;
+  }
+
+  return text.includes("毛刷") ? 1 : 0;
 }

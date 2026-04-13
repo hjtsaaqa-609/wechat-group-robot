@@ -395,6 +395,14 @@ export class DasClient {
     });
   }
 
+  async fetchFaultOperationsReport(range: DateRange): Promise<OperationsReport> {
+    return this.getJson<OperationsReport>("/api/stat-reports", {
+      start_at: range.startAt,
+      end_at: range.endAt,
+      report_mode: "fault",
+    });
+  }
+
   async fetchBusinessStats(): Promise<BusinessStatsResponse> {
     return this.getJson<BusinessStatsResponse>("/api/business-stats");
   }
