@@ -27,6 +27,7 @@ export type InternalWebhookChannelConfig = {
   webhook?: string;
   webhookEnv?: string;
   maxMarkdownBytes?: number;
+  maxTextBytes?: number;
 };
 
 export type InternalAppMessageChannelConfig = {
@@ -43,6 +44,7 @@ export type InternalAppMessageChannelConfig = {
   enableDuplicateCheck?: boolean;
   duplicateCheckInterval?: number;
   maxMarkdownBytes?: number;
+  maxTextBytes?: number;
 };
 
 export type ExternalGroupTaskChannelConfig = {

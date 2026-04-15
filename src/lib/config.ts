@@ -14,6 +14,7 @@ export type ResolvedInternalWebhookChannel = {
   type: "internal-webhook";
   webhook: string;
   maxMarkdownBytes: number;
+  maxTextBytes: number;
 };
 
 export type ResolvedInternalAppMessageChannel = {
@@ -27,6 +28,7 @@ export type ResolvedInternalAppMessageChannel = {
   enableDuplicateCheck: boolean;
   duplicateCheckInterval: number;
   maxMarkdownBytes: number;
+  maxTextBytes: number;
 };
 
 export type ResolvedExternalGroupTaskChannel = {
@@ -122,6 +124,7 @@ function resolveInternalWebhookChannel(
     type: channel.type,
     webhook,
     maxMarkdownBytes: channel.maxMarkdownBytes ?? 2048,
+    maxTextBytes: channel.maxTextBytes ?? 2048,
   };
 }
 
@@ -145,6 +148,7 @@ function resolveInternalAppMessageChannel(
     enableDuplicateCheck: channel.enableDuplicateCheck ?? true,
     duplicateCheckInterval: channel.duplicateCheckInterval ?? 1800,
     maxMarkdownBytes: channel.maxMarkdownBytes ?? 2048,
+    maxTextBytes: channel.maxTextBytes ?? 2048,
   };
 }
 

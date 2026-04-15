@@ -15,7 +15,12 @@ export async function sendRenderedReport(
   report: RenderedReport,
 ): Promise<void> {
   if (channel.type === "internal-webhook") {
-    await sendInternalWebhookReport(channel.webhook, report, channel.maxMarkdownBytes);
+    await sendInternalWebhookReport(
+      channel.webhook,
+      report,
+      channel.maxMarkdownBytes,
+      channel.maxTextBytes,
+    );
     return;
   }
 
@@ -31,6 +36,7 @@ async function sendInternalWebhookReport(
   webhook: string,
   report: RenderedReport,
   maxMarkdownBytes: number,
+  maxTextBytes: number,
 ): Promise<void> {
   if (utf8ByteLength(report.markdown) <= maxMarkdownBytes) {
     await postWebhookMessage(webhook, {
@@ -42,13 +48,15 @@ async function sendInternalWebhookReport(
     return;
   }
 
-  const mediaId = await uploadWebhookFile(webhook, report);
-  await postWebhookMessage(webhook, {
-    msgtype: "file",
-    file: {
-      media_id: mediaId,
-    },
-  });
+  const chunks = splitInternalTextMessages(report.markdown, maxTextBytes);
+  for (const chunk of chunks) {
+    await postWebhookMessage(webhook, {
+      msgtype: "text",
+      text: {
+        content: chunk,
+      },
+    });
+  }
 }
 
 async function sendInternalAppMessageReport(
@@ -73,19 +81,21 @@ async function sendInternalAppMessageReport(
     return;
   }
 
-  const mediaId = await uploadAppFile(accessToken, report);
-  await postJson(buildApiUrl("/cgi-bin/message/send", accessToken), {
-    touser: channel.touser,
-    toparty: channel.toparty,
-    totag: channel.totag,
-    msgtype: "file",
-    agentid: channel.agentId,
-    file: {
-      media_id: mediaId,
-    },
-    enable_duplicate_check: channel.enableDuplicateCheck ? 1 : 0,
-    duplicate_check_interval: channel.duplicateCheckInterval,
-  });
+  const chunks = splitInternalTextMessages(report.markdown, channel.maxTextBytes);
+  for (const chunk of chunks) {
+    await postJson(buildApiUrl("/cgi-bin/message/send", accessToken), {
+      touser: channel.touser,
+      toparty: channel.toparty,
+      totag: channel.totag,
+      msgtype: "text",
+      agentid: channel.agentId,
+      text: {
+        content: chunk,
+      },
+      enable_duplicate_check: channel.enableDuplicateCheck ? 1 : 0,
+      duplicate_check_interval: channel.duplicateCheckInterval,
+    });
+  }
 }
 
 async function createExternalGroupTask(
@@ -108,41 +118,6 @@ async function createExternalGroupTask(
   }
 
   await postJson(buildApiUrl("/cgi-bin/externalcontact/add_msg_template", accessToken), body);
-}
-
-async function uploadWebhookFile(webhook: string, report: RenderedReport): Promise<string> {
-  const webhookUrl = new URL(webhook);
-  const key = webhookUrl.searchParams.get("key");
-  if (!key) {
-    throw new Error("Webhook 缺少 key，无法上传文件");
-  }
-
-  const uploadUrl = `${webhookUrl.origin}/cgi-bin/webhook/upload_media?key=${key}&type=file`;
-  return uploadFile(uploadUrl, report);
-}
-
-async function uploadAppFile(accessToken: string, report: RenderedReport): Promise<string> {
-  const uploadUrl = buildApiUrl("/cgi-bin/media/upload", accessToken, { type: "file" });
-  return uploadFile(uploadUrl, report);
-}
-
-async function uploadFile(url: string, report: RenderedReport): Promise<string> {
-  const form = new FormData();
-  form.append("media", new Blob([report.markdown], { type: "text/markdown;charset=utf-8" }), `${sanitizeFileName(report.title)}.md`);
-
-  const response = await fetch(url, {
-    method: "POST",
-    body: form,
-  });
-
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok || payload?.errcode !== 0 || !payload?.media_id) {
-    throw new Error(
-      `企业微信文件上传失败: ${payload?.errmsg ?? response.statusText ?? "未知错误"}`,
-    );
-  }
-
-  return String(payload.media_id);
 }
 
 async function postWebhookMessage(
@@ -214,21 +189,12 @@ function utf8ByteLength(content: string): number {
   return Buffer.byteLength(content, "utf8");
 }
 
-function sanitizeFileName(input: string): string {
-  return input.replace(/[\\/:*?"<>|]/g, "-").replace(/\s+/g, "_");
-}
-
 function toExternalSummary(
   markdown: string,
   maxTextLength: number,
   textPrefix?: string,
 ): string {
-  const plainText = markdown
-    .replace(/<font[^>]*>/g, "")
-    .replace(/<\/font>/g, "")
-    .replace(/[`*_>#-]/g, "")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
+  const plainText = toPlainText(markdown);
   const withPrefix = textPrefix ? `${textPrefix}\n\n${plainText}` : plainText;
 
   if (withPrefix.length <= maxTextLength) {
@@ -236,4 +202,79 @@ function toExternalSummary(
   }
 
   return `${withPrefix.slice(0, Math.max(0, maxTextLength - 1))}…`;
+}
+
+function toInternalPlainText(markdown: string): string {
+  return toPlainText(markdown);
+}
+
+function splitInternalTextMessages(markdown: string, maxBytes: number): string[] {
+  const plainText = toInternalPlainText(markdown);
+  if (utf8ByteLength(plainText) <= maxBytes) {
+    return [plainText];
+  }
+
+  const chunks: string[] = [];
+  let current = "";
+
+  for (const line of plainText.split("\n")) {
+    const candidate = current ? `${current}\n${line}` : line;
+    if (utf8ByteLength(candidate) <= maxBytes) {
+      current = candidate;
+      continue;
+    }
+
+    if (current) {
+      chunks.push(current);
+      current = "";
+    }
+
+    if (utf8ByteLength(line) <= maxBytes) {
+      current = line;
+      continue;
+    }
+
+    chunks.push(...splitOversizedText(line, maxBytes));
+  }
+
+  if (current) {
+    chunks.push(current);
+  }
+
+  return chunks;
+}
+
+function splitOversizedText(value: string, maxBytes: number): string[] {
+  const chunks: string[] = [];
+  let current = "";
+
+  for (const char of value) {
+    const candidate = `${current}${char}`;
+    if (utf8ByteLength(candidate) <= maxBytes) {
+      current = candidate;
+      continue;
+    }
+
+    if (current) {
+      chunks.push(current);
+    }
+    current = char;
+  }
+
+  if (current) {
+    chunks.push(current);
+  }
+
+  return chunks;
+}
+
+function toPlainText(markdown: string): string {
+  return markdown
+    .replace(/<font[^>]*>/g, "")
+    .replace(/<\/font>/g, "")
+    .replace(/[`*_]/g, "")
+    .replace(/^\s{0,3}#{1,6}\s+/gm, "")
+    .replace(/^\s*>\s?/gm, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
