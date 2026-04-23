@@ -121,7 +121,7 @@ export async function renderWeeklyOperationsReport(
     `<font color="info">[${context.jobName}] 经营周报</font>`,
     `统计周期：${weekRange.label}`,
     `发送时间：${context.executedAt}`,
-    `统计说明：周报默认按自然周统计；投诉、3级故障、异常组件解决率、每GW毛刷更换次数按年度累计统计`,
+    `统计说明：周报默认按周六至周五统计；投诉、3级故障、异常组件解决率、每GW毛刷更换次数按年度累计统计`,
     `标记说明：尚未入系统 = 目标已在 2026 经营目标中明确，但 DAS 当前缺少稳定字段或统计口径仍待确认`,
     "",
     section("公司整体"),

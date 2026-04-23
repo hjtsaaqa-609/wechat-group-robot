@@ -60,8 +60,8 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\wechat-group-chat-ro
 
 说明：
 
-- 当前周报统计的是“最近一个已结束的完整自然周”
-- 因此周一早上发送，统计周期正好是上一周周一到周日
+- 当前周报统计的是“最近一个已结束的周六至周五周期”
+- 因此周一早上发送，统计周期正好是上上周六到上周五
 
 ### 操作
 

@@ -1,5 +1,4 @@
 import dayjs from "dayjs";
-import isoWeek from "dayjs/plugin/isoWeek.js";
 import timezonePlugin from "dayjs/plugin/timezone.js";
 import utc from "dayjs/plugin/utc.js";
 
@@ -7,7 +6,6 @@ import type { DateRange, RangePreset } from "../types.js";
 
 dayjs.extend(utc);
 dayjs.extend(timezonePlugin);
-dayjs.extend(isoWeek);
 
 export function resolveDateRange(
   preset: RangePreset = "today",
@@ -61,8 +59,9 @@ export function nowLabel(timezone: string): string {
 
 export function resolveLastCompletedWeekRange(timezone: string): DateRange {
   const now = dayjs().tz(timezone);
-  const start = now.startOf("isoWeek").subtract(1, "week");
-  const end = start.endOf("isoWeek");
+  const daysSinceFriday = (now.day() + 2) % 7 || 7;
+  const end = now.startOf("day").subtract(daysSinceFriday, "day").endOf("day");
+  const start = end.subtract(6, "day").startOf("day");
 
   return {
     preset: "last7days",
