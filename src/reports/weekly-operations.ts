@@ -64,10 +64,12 @@ export async function renderWeeklyOperationsReport(
     client.fetchTodoList(weekRange),
   ]);
 
-  const [complaints, yearlyInspectionKpi, powerBoost] = await Promise.all([
+  const [complaints, yearlyInspectionKpi, powerBoost, brushStats, productionStats] = await Promise.all([
     fetchOptional("年度累计投诉数量", () => client.fetchCustomerComplaints(yearRange)),
     fetchYearlyInspectionKpi(client, yearRange),
     fetchOptional("发电量未达预期率", () => client.fetchPowerBoost(weekRange)),
+    fetchOptional("毛刷统计", () => client.fetchBrushStats()),
+    fetchOptional("生产统计", () => client.fetchProductionStats()),
   ]);
   const cleaningQuality = await fetchOptional("清洁度未达预期率", () =>
     client.fetchCleaningQuality(weekRange),
@@ -92,17 +94,21 @@ export async function renderWeeklyOperationsReport(
     faultOperations.summary.onsiteMaintenanceCountPerGW > 0
       ? faultOperations.summary.onsiteMaintenanceCountPerGW
       : derivedKpis.onsiteMaintenanceCountPerGw;
-  const consumableReplacementCountPerGw =
-    yearFaultOperations.summary.consumableReplacementCountPerGW > 0
-      ? yearFaultOperations.summary.consumableReplacementCountPerGW
-      : faultOperations.summary.consumableReplacementCountPerGW > 0
-        ? faultOperations.summary.consumableReplacementCountPerGW
-        : derivedKpis.consumableReplacementCountPerGw;
-
   const projectQuality = project.quality;
   if (!projectQuality) {
     throw new Error("项目质量统计缺失，无法生成 KPI 周报");
   }
+  const productionSummary = productionStats?.summary ?? null;
+  const productionDataNote = productionStats
+    ? "生产统计页未返回有效数据"
+    : "DAS 生产统计页数据不可用";
+  const outgoingYieldRate = finiteNumberOrNull(productionSummary?.outgoingYieldRate);
+  const shippingAccuracyRate = finiteNumberOrNull(productionSummary?.shippingAccuracyRate);
+  const inventoryAccuracyRate = finiteNumberOrNull(productionSummary?.inventoryAccuracyRate);
+  const brushReplacementCountPerGw = finiteNumberOrNull(brushStats?.summary.replacementCountPerGW);
+  const brushDataNote = brushStats
+    ? "毛刷统计页未返回有效数据"
+    : "DAS 毛刷统计页数据不可用";
 
   const abnormalModuleLine = yearlyInspectionKpi.available
     ? formatThresholdPercentKpi(
@@ -121,7 +127,7 @@ export async function renderWeeklyOperationsReport(
     `<font color="info">[${context.jobName}] 经营周报</font>`,
     `统计周期：${weekRange.label}`,
     `发送时间：${context.executedAt}`,
-    `统计说明：周报默认按周六至周五统计；投诉、3级故障、异常组件解决率、每GW毛刷更换次数按年度累计统计`,
+    `统计说明：周报默认按周六至周五统计；投诉、3级故障、异常组件解决率按年度累计统计；每GW毛刷更换次数取毛刷统计页全量生命周期口径`,
     `标记说明：尚未入系统 = 目标已在 2026 经营目标中明确，但 DAS 当前缺少稳定字段或统计口径仍待确认`,
     "",
     section("公司整体"),
@@ -162,21 +168,29 @@ export async function renderWeeklyOperationsReport(
     formatUnavailableKpi("确认收入", "目标 2,000 万（存量 300 万 + 新增 1,700 万）"),
     "",
     section("生产部"),
-    formatThresholdPercentKpi(
+    formatNullableThresholdPercentKpi(
       "出厂良品率",
-      projectQuality.productionOutgoingYield.yearToDate.yieldRate,
+      outgoingYieldRate,
       KPI_TARGETS.outgoingYieldRate,
       ">=",
+      productionDataNote,
     ),
-    formatThresholdPercentKpi(
+    formatNullableThresholdPercentKpi(
       "发货正确率",
-      projectQuality.productionShippingAccuracy.yearToDate.accuracyRate,
+      shippingAccuracyRate,
       KPI_TARGETS.shippingAccuracyRate,
       ">=",
+      productionDataNote,
     ),
-    formatUnavailableKpi(
+    productionSummary
+      ? `口径：发出设备 ${formatNumber(productionSummary.shippedDeviceCount)}，出厂不良 ${formatNumber(productionSummary.outgoingDefectCount)}，发货错误 ${formatNumber(productionSummary.shippingErrorCount)}`
+      : `口径：尚未入系统（${productionDataNote}）`,
+    formatNullableThresholdPercentKpi(
       "季度库存盘点准确率",
-      `目标 >= ${formatPercent(KPI_TARGETS.quarterlyInventoryAccuracyRate, 2)}`,
+      inventoryAccuracyRate,
+      KPI_TARGETS.quarterlyInventoryAccuracyRate,
+      ">=",
+      productionSummary ? "生产统计页未返回有效盘点准确率" : productionDataNote,
     ),
     formatUnavailableKpi(
       "单台机器人制造成本",
@@ -208,12 +222,16 @@ export async function renderWeeklyOperationsReport(
       KPI_TARGETS.onsiteMaintenancePerGw,
       "<=",
     ),
-    formatThresholdNumberKpi(
-      "年度累计每GW毛刷更换次数",
-      consumableReplacementCountPerGw,
+    formatNullableThresholdNumberKpi(
+      "每GW毛刷更换次数",
+      brushReplacementCountPerGw,
       KPI_TARGETS.brushReplacementPerGw,
       "<=",
+      brushDataNote,
     ),
+    brushStats
+      ? `口径：毛刷平均寿命 ${formatNumber(brushStats.summary.averageLifetimeMw, 2)} MW/次，完整生命周期样本 ${formatNumber(brushStats.summary.lifecycleSampleCount)}，更换事件 ${formatNumber(brushStats.summary.replacementEventCount)}`
+      : `口径：尚未入系统（${brushDataNote}）`,
     "",
     section("运营部"),
     formatThresholdCountKpi(
@@ -336,6 +354,18 @@ function formatThresholdNumberKpi(
   return `${label}：${formatNumber(actual, 2)}（目标 ${operator} ${formatNumber(target, 2)}）`;
 }
 
+function formatNullableThresholdNumberKpi(
+  label: string,
+  actual: number | null,
+  target: number,
+  operator: "<=" | ">=",
+  unavailableNote: string,
+): string {
+  return actual === null
+    ? formatUnavailableKpi(label, `目标 ${operator} ${formatNumber(target, 2)}`, unavailableNote)
+    : formatThresholdNumberKpi(label, actual, target, operator);
+}
+
 function formatThresholdPercentKpi(
   label: string,
   actual: number | null,
@@ -346,6 +376,18 @@ function formatThresholdPercentKpi(
   return `${label}：${actualText}（目标 ${operator} ${formatPercent(target, 2)}）`;
 }
 
+function formatNullableThresholdPercentKpi(
+  label: string,
+  actual: number | null,
+  target: number,
+  operator: "<=" | ">=",
+  unavailableNote: string,
+): string {
+  return actual === null
+    ? formatUnavailableKpi(label, `目标 ${operator} ${formatPercent(target, 2)}`, unavailableNote)
+    : formatThresholdPercentKpi(label, actual, target, operator);
+}
+
 function formatUnavailableKpi(
   label: string,
   targetText: string,
@@ -353,6 +395,10 @@ function formatUnavailableKpi(
 ): string {
   const suffix = note ? `；${note}` : "";
   return `${label}：尚未入系统（${targetText}${suffix}）`;
+}
+
+function finiteNumberOrNull(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
 async function fetchOptional<T>(
@@ -407,14 +453,12 @@ function deriveWeeklyPerGwKpis(
 ): {
   takeoverCountPerGw: number;
   onsiteMaintenanceCountPerGw: number;
-  consumableReplacementCountPerGw: number;
 } {
   const cleanedGw = toCleaningMw(cleaningArea) / 1000;
   if (!Number.isFinite(cleanedGw) || cleanedGw <= 0) {
     return {
       takeoverCountPerGw: 0,
       onsiteMaintenanceCountPerGw: 0,
-      consumableReplacementCountPerGw: 0,
     };
   }
 
@@ -425,20 +469,10 @@ function deriveWeeklyPerGwKpis(
   const onsiteMaintenanceCount = inputs.fieldFaults.filter(
     (item) => item.level === "2" && isWithinRange(item.startAt, inputs.range),
   ).length;
-  const consumableReplacementCount = inputs.todoItems
-    .filter(
-      (item) =>
-        item.type === "cleaningQualityInspection" &&
-        item.status === "processed" &&
-        item.processedAt !== null &&
-        isWithinRange(item.processedAt, inputs.range),
-    )
-    .reduce((sum, item) => sum + parseBrushReplacementCount(item.name), 0);
 
   return {
     takeoverCountPerGw: takeoverCount / cleanedGw,
     onsiteMaintenanceCountPerGw: onsiteMaintenanceCount / cleanedGw,
-    consumableReplacementCountPerGw: consumableReplacementCount / cleanedGw,
   };
 }
 
@@ -451,21 +485,4 @@ function isWithinRange(
   const end = Date.parse(range.endAt);
 
   return Number.isFinite(target) && target >= start && target <= end;
-}
-
-function parseBrushReplacementCount(text: string): number {
-  const explicitCount = text.match(/(?:共)?\s*(\d+)\s*(?:台|条)/);
-  if (explicitCount) {
-    return Number(explicitCount[1]);
-  }
-
-  const robotMentions = new Set<string>();
-  for (const match of text.matchAll(/(\d+-\d+|\d+号(?:机|机器人))/g)) {
-    robotMentions.add(match[1]);
-  }
-  if (robotMentions.size > 0) {
-    return robotMentions.size;
-  }
-
-  return text.includes("毛刷") ? 1 : 0;
 }

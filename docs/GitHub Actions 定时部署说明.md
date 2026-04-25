@@ -1,54 +1,93 @@
-# GitHub Actions 定时部署说明
+# GitHub Actions 外部定时触发说明
 
 ## 适用场景
 
-如果不希望依赖本地电脑或 Windows 任务计划程序，可以直接使用 GitHub Actions 定时执行周报推送。
+本项目的 GitHub Actions 不再使用 GitHub 内置 `schedule` 定时器，避免仓库内部自动触发周报。
 
-当前项目已经内置工作流：
+当前设计是：
 
-[`das-weekly-report.yml`](/Users/michael/Documents/AI%20Codex/Wechat%20group%20chat%20robot/.github/workflows/das-weekly-report.yml)
+- 外部定时任务在每周一北京时间 `08:38` 触发一次 GitHub Action
+- GitHub Actions 只负责单次执行周报任务
+- GitHub 页面仍保留手动执行入口，便于测试和补发
+- 项目内的 `node-cron` 只在手动运行 `npm run start` 时生效，Actions 默认不会使用它
 
-## 当前工作流能力
+工作流文件：
 
-- 支持避开整点的双触发
-- 当前为了测试，先按“每天触发一次主任务 + 一次补偿任务”运行
-- 支持在 GitHub 页面手动点击执行
-- 支持手动 dry-run 预览
-- 支持手动强制重发当前统计周期
-- 同一统计周期默认只会成功发送一次
-- 执行完成后自动把 [data/report-state.json](/Users/michael/Documents/AI%20Codex/Wechat%20group%20chat%20robot/data/report-state.json) 回写到仓库
+[`../.github/workflows/das-weekly-report.yml`](../.github/workflows/das-weekly-report.yml)
 
-之所以要回写状态文件，是因为：
+## 当前触发方式
 
-- GitHub Actions Runner 是无状态的
-- 周报中的“机器人变化数量”依赖上一次执行结果
-- 当前项目通过本地状态文件保存该值
-
-## 定时表达式与时区
-
-工作流里的定时表达式是：
+工作流当前只保留两类触发方式：
 
 ```yaml
-schedule:
-  - cron: "23 0 * * *"
-  - cron: "47 0 * * *"
+on:
+  workflow_dispatch:
+  repository_dispatch:
+    types:
+      - das-weekly-report
 ```
-
-GitHub Actions 的 `schedule` 使用 UTC。
-
-因此当前测试阶段会在每天北京时间这两个时间点触发：
-
-- `08:23`
-- `08:47`
 
 说明：
 
-- 两次都避开整点附近高负载时段
-- 第二次触发是补偿触发
-- 如果第一次已经成功发送，当天第二次会因“当前统计周期已发送”被自动跳过
-- 如果第一次运行失败，第二次仍有机会补发
+- `workflow_dispatch`：用于 GitHub 页面手动执行，也可被外部定时器通过 API 调用
+- `repository_dispatch`：推荐给外部定时器调用，事件类型固定为 `das-weekly-report`
+- 不再配置 `schedule`，因此 GitHub Actions 自身不会按时间自动运行
 
-测试稳定后，可以再把 schedule 改回每周频率。
+## 外部定时器推荐调用方式
+
+推荐外部定时器调用 GitHub `repository_dispatch` API。
+
+请求地址：
+
+```text
+POST https://api.github.com/repos/hjtsaaqa-609/wechat-group-robot/dispatches
+```
+
+请求头：
+
+```text
+Accept: application/vnd.github+json
+Authorization: Bearer <GitHub Token>
+X-GitHub-Api-Version: 2022-11-28
+Content-Type: application/json
+```
+
+请求体：
+
+```json
+{
+  "event_type": "das-weekly-report",
+  "client_payload": {
+    "job_name": "DAS周报",
+    "force_send": "false"
+  }
+}
+```
+
+如果需要强制重发当前统计周期，可把 `force_send` 改为 `"true"`。
+
+## 兼容 workflow_dispatch 调用
+
+如果外部定时器已经使用 `workflow_dispatch` API，也可以继续使用。
+
+请求地址：
+
+```text
+POST https://api.github.com/repos/hjtsaaqa-609/wechat-group-robot/actions/workflows/das-weekly-report.yml/dispatches
+```
+
+请求体：
+
+```json
+{
+  "ref": "main",
+  "inputs": {
+    "job_name": "DAS周报",
+    "dry_run": "false",
+    "force_send": "false"
+  }
+}
+```
 
 ## 需要配置的 Secrets
 
@@ -125,32 +164,18 @@ git push
 - 企业微信群机器人发送正常
 - `data/report-state.json` 可以成功回写
 
-## 官方限制与风险
+## 内部触发机制排查结论
 
-GitHub 官方文档明确说明了几条限制：
-
-- `schedule` 任务在高负载时可能延迟
-- 整点附近更容易延迟
-- 如果负载很高，排队任务可能被丢弃
-- 计划任务只会在默认分支上运行
-- 如果仓库是公开仓库且 60 天没有活动，计划任务会被自动禁用
-
-官方文档：
-
-- [GitHub Actions scheduled workflows](https://docs.github.com/en/actions/writing-workflows/choosing-when-your-workflow-runs/events-that-trigger-workflows)
-- [GITHUB_TOKEN](https://docs.github.com/actions/concepts/security/github_token)
-
-因此我对这个方案的判断是：
-
-- 对“每周一次、允许有几分钟延迟”的周报，通常可接受
-- 对“必须精确到分钟、不能错过”的强 SLA 任务，不如服务器 `cron` 稳
+- `.github/workflows/das-weekly-report.yml` 已移除 `schedule`，GitHub 不会再自行按时间触发。
+- `src/index.ts` 使用 `node-cron` 注册内部定时任务，但只有执行 `npm run start` 时才会进入定时模式。
+- GitHub Actions 当前执行命令是 `npm run once`，不会读取 `config/jobs.json` 的 `cron` 作为定时器。
+- 如果有服务器或本地电脑长期运行 `npm run start`，仍可能按 `config/jobs.json` 自动发送；只依赖外部定时器时，不要常驻运行该命令。
 
 ## 推荐验收顺序
 
-1. 先把代码推到 GitHub 默认分支 `main`
-2. 配置 3 个 Secrets
-3. 打开 `Actions` 手动执行一次正式任务
-4. 确认企业微信群收到周报
-5. 确认 `data/report-state.json` 被自动提交回仓库
-6. 观察接下来每天 `08:23 / 08:47` 的自动触发情况
-7. 测试稳定后，再把频率收回到每周
+1. 推送最新 workflow 到 GitHub 默认分支 `main`
+2. 确认外部定时器触发时间为每周一北京时间 `08:38`
+3. 外部定时器调用 `repository_dispatch` 或 `workflow_dispatch`
+4. 在 GitHub Actions 页面确认触发来源不是 `schedule`
+5. 确认企业微信群收到周报
+6. 确认 `data/report-state.json` 被自动提交回仓库

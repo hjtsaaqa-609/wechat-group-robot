@@ -111,6 +111,47 @@ export type ShippingAccuracySnapshot = {
   accuracyRate: number | null;
 };
 
+export type ProductionKpiRecord = {
+  id: string;
+  year: number;
+  periodLabel: string;
+  dateText: string;
+  shippingTotalCount: number;
+  shippedDeviceCount: number;
+  outgoingDefectCount: number;
+  outgoingGoodCount: number;
+  outgoingYieldRate: number | null;
+  shippingErrorCount: number;
+  shippingCorrectCount: number;
+  shippingAccuracyRate: number | null;
+  shippingDelayCount: number;
+  shippingTimelyCount: number;
+  shippingTimelyRate: number | null;
+  inventoryMaterialCount: number;
+  inventoryDiffMaterialCount: number;
+  inventoryAccuracyRate: number | null;
+};
+
+export type ProductionStatsResponse = {
+  source: {
+    tableName: string | null;
+    rowCount: number;
+    generatedAt: string;
+    message: string | null;
+  };
+  summary: ProductionKpiRecord | null;
+  records: ProductionKpiRecord[];
+};
+
+export type BrushStatsResponse = {
+  summary: {
+    replacementCountPerGW: number;
+    averageLifetimeMw: number;
+    lifecycleSampleCount: number;
+    replacementEventCount: number;
+  };
+};
+
 export type DashboardData = {
   site: SiteStatsResponse;
   robot: RobotStatsResponse;
@@ -416,6 +457,14 @@ export class DasClient {
 
   async fetchProjectStats(): Promise<ProjectStatsResponse> {
     return this.getJson<ProjectStatsResponse>("/api/project-stats");
+  }
+
+  async fetchProductionStats(): Promise<ProductionStatsResponse> {
+    return this.getJson<ProductionStatsResponse>("/api/production-stats");
+  }
+
+  async fetchBrushStats(): Promise<BrushStatsResponse> {
+    return this.getJson<BrushStatsResponse>("/api/brush-stats");
   }
 
   async fetchInspectionStats(range: DateRange): Promise<InspectionStatsResponse> {
