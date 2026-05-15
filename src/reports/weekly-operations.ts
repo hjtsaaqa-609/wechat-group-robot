@@ -64,12 +64,20 @@ export async function renderWeeklyOperationsReport(
     client.fetchTodoList(weekRange),
   ]);
 
-  const [complaints, yearlyInspectionKpi, powerBoost, brushStats, productionStats] = await Promise.all([
+  const [
+    complaints,
+    yearlyInspectionKpi,
+    powerBoost,
+    brushStats,
+    productionStats,
+    contractManagement,
+  ] = await Promise.all([
     fetchOptional("年度累计投诉数量", () => client.fetchCustomerComplaints(yearRange)),
     fetchYearlyInspectionKpi(client, yearRange),
     fetchOptional("发电量未达预期率", () => client.fetchPowerBoost(weekRange)),
     fetchOptional("毛刷统计", () => client.fetchBrushStats()),
     fetchOptional("生产统计", () => client.fetchProductionStats()),
+    fetchOptional("合同管理", () => client.fetchContractManagement()),
   ]);
   const cleaningQuality = await fetchOptional("清洁度未达预期率", () =>
     client.fetchCleaningQuality(weekRange),
@@ -109,6 +117,13 @@ export async function renderWeeklyOperationsReport(
   const brushDataNote = brushStats
     ? "毛刷统计页未返回有效数据"
     : "DAS 毛刷统计页数据不可用";
+  const confirmedRevenueYuan = finiteNumberOrNull(
+    contractManagement?.summary.recognizedAnnualRevenue,
+  );
+  const confirmedRevenueCutoff = contractManagement?.summary.recognizedRevenueCutoff ?? null;
+  const revenueDataNote = contractManagement
+    ? "合同管理页未返回有效年度确认收入"
+    : "DAS 合同管理页数据不可用";
 
   const abnormalModuleLine = yearlyInspectionKpi.available
     ? formatThresholdPercentKpi(
@@ -138,9 +153,13 @@ export async function renderWeeklyOperationsReport(
       "台",
     ),
     `口径：试运行 ${formatNumber(business.summary.trialRun)} + 正式运营 ${formatNumber(business.summary.formalOperation)}`,
-    formatUnavailableKpi(
-      "确认收入",
+    formatConfirmedRevenueKpi(
+      "年度确认收入",
+      confirmedRevenueYuan,
+      confirmedRevenueCutoff,
+      KPI_TARGETS.companyConfirmedRevenueWan,
       `目标 ${formatNumber(KPI_TARGETS.companyConfirmedRevenueWan)} 万`,
+      revenueDataNote,
     ),
     formatUnavailableKpi("公司整体盈利", "目标 2026 年底实现整体盈利"),
     "",
@@ -165,7 +184,15 @@ export async function renderWeeklyOperationsReport(
       "台",
     ),
     `目标拆分：存量 250 台 + 新增 750 台`,
-    formatUnavailableKpi("确认收入", "目标 2,000 万（存量 300 万 + 新增 1,700 万）"),
+    formatConfirmedRevenueKpi(
+      "年度确认收入",
+      confirmedRevenueYuan,
+      confirmedRevenueCutoff,
+      KPI_TARGETS.companyConfirmedRevenueWan,
+      "目标 2,000 万（存量 300 万 + 新增 1,700 万）",
+      revenueDataNote,
+      "目标拆分：存量 300 万 + 新增 1,700 万",
+    ),
     "",
     section("生产部"),
     formatNullableThresholdPercentKpi(
@@ -332,6 +359,27 @@ function formatCountKpi(
 ): string {
   const progress = target > 0 ? `${formatPercent(actual / target, 1)}` : "--";
   return `${label}：${formatNumber(actual)} ${unit} / ${formatNumber(target)} ${unit}（达成 ${progress}）`;
+}
+
+function formatConfirmedRevenueKpi(
+  label: string,
+  actualYuan: number | null,
+  cutoff: string | null,
+  targetWan: number,
+  targetText: string,
+  unavailableNote: string,
+  actualNote?: string,
+): string {
+  if (actualYuan === null) {
+    return formatUnavailableKpi(label, targetText, unavailableNote);
+  }
+
+  const actualWan = actualYuan / 10000;
+  const progress = targetWan > 0 ? formatPercent(actualWan / targetWan, 1) : "--";
+  const cutoffText = cutoff ? `截止时间 ${cutoff}` : "截止时间未返回";
+  const noteSuffix = actualNote ? `；${actualNote}` : "";
+
+  return `${label}：${formatNumber(actualWan, 2)} 万 / ${formatNumber(targetWan)} 万（达成 ${progress}；${cutoffText}${noteSuffix}）`;
 }
 
 function formatThresholdCountKpi(

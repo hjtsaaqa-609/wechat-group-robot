@@ -152,6 +152,23 @@ export type BrushStatsResponse = {
   };
 };
 
+export type ContractManagementResponse = {
+  summary: {
+    contractCount: number;
+    contractLineCount: number;
+    recognizedAnnualRevenue: number | null;
+    recognizedRevenueCutoff: string | null;
+    robotCount: number;
+    matchedRobotCount: number;
+    serviceRobotCount: number;
+    missingAcceptanceTimeCount: number;
+    noServiceCapacityCount: number;
+    unmatchedContractRobotCount: number;
+    latestUpdatedAt: string | null;
+    syncedAt: string | null;
+  };
+};
+
 export type DashboardData = {
   site: SiteStatsResponse;
   robot: RobotStatsResponse;
@@ -465,6 +482,10 @@ export class DasClient {
 
   async fetchBrushStats(): Promise<BrushStatsResponse> {
     return this.getJson<BrushStatsResponse>("/api/brush-stats");
+  }
+
+  async fetchContractManagement(): Promise<ContractManagementResponse> {
+    return this.getJson<ContractManagementResponse>("/api/contract-management");
   }
 
   async fetchInspectionStats(range: DateRange): Promise<InspectionStatsResponse> {
