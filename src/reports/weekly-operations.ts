@@ -51,7 +51,6 @@ export async function renderWeeklyOperationsReport(
     project,
     operations,
     faultOperations,
-    yearFaultOperations,
     fieldTodos,
     todoList,
   ] = await Promise.all([
@@ -59,7 +58,6 @@ export async function renderWeeklyOperationsReport(
     client.fetchProjectStats(),
     client.fetchOperationsReport(weekRange),
     client.fetchFaultOperationsReport(weekRange),
-    client.fetchFaultOperationsReport(yearRange),
     client.fetchFieldTodos(),
     client.fetchTodoList(weekRange),
   ]);
@@ -71,6 +69,8 @@ export async function renderWeeklyOperationsReport(
     brushStats,
     productionStats,
     contractManagement,
+    costControl,
+    yearFaultOperations,
   ] = await Promise.all([
     fetchOptional("年度累计投诉数量", () => client.fetchCustomerComplaints(yearRange)),
     fetchYearlyInspectionKpi(client, yearRange),
@@ -78,6 +78,8 @@ export async function renderWeeklyOperationsReport(
     fetchOptional("毛刷统计", () => client.fetchBrushStats()),
     fetchOptional("生产统计", () => client.fetchProductionStats()),
     fetchOptional("合同管理", () => client.fetchContractManagement()),
+    fetchOptional("费用控制", () => client.fetchCostControl()),
+    fetchOptional("年度累计3级故障数", () => client.fetchFaultOperationsReport(yearRange)),
   ]);
   const cleaningQuality = await fetchOptional("清洁度未达预期率", () =>
     client.fetchCleaningQuality(weekRange),
@@ -85,8 +87,11 @@ export async function renderWeeklyOperationsReport(
 
   const currentPlatformRobotCount =
     business.summary.trialRun + business.summary.formalOperation;
-  const levelThreeCount = sumFaultLevel(yearFaultOperations.faultCategoryByLevel, "3");
+  const levelThreeCount = yearFaultOperations
+    ? sumFaultLevel(yearFaultOperations.faultCategoryByLevel, "3")
+    : null;
   const cleaningInspectionBacklog = fieldTodos.summary.todoCount;
+  const pendingLevelTwoFaultRobotCount = sumLevelTwoFaultRobots(fieldTodos.faults);
   const brushBacklogDays = fieldTodos.summary.todoAvgDurationHours / 24;
   const pendingFaultDays = fieldTodos.summary.faultAvgDurationHours / 24;
   const derivedKpis = deriveWeeklyPerGwKpis(operations.summary.monthlyCleaningArea, {
@@ -124,6 +129,10 @@ export async function renderWeeklyOperationsReport(
   const revenueDataNote = contractManagement
     ? "合同管理页未返回有效年度确认收入"
     : "DAS 合同管理页数据不可用";
+  const annualizedCostItems = buildAnnualizedCostItems(costControl?.items ?? []);
+  const costControlDataNote = costControl
+    ? "费用控制页未返回有效年化均摊数据"
+    : "DAS 费用控制页数据不可用";
 
   const abnormalModuleLine = yearlyInspectionKpi.available
     ? formatThresholdPercentKpi(
@@ -142,7 +151,7 @@ export async function renderWeeklyOperationsReport(
     `<font color="info">[${context.jobName}] 经营周报</font>`,
     `统计周期：${weekRange.label}`,
     `发送时间：${context.executedAt}`,
-    `统计说明：周报默认按周六至周五统计；投诉、3级故障、异常组件解决率按年度累计统计；每GW毛刷更换次数取毛刷统计页全量生命周期口径`,
+    `统计说明：周报默认按周六至周五统计；投诉、3级故障、异常组件解决率按年度累计统计；每GW毛刷更换次数取毛刷统计页全量生命周期口径；项目费用控制取费用控制页年化均摊口径`,
     `标记说明：尚未入系统 = 目标已在 2026 经营目标中明确，但 DAS 当前缺少稳定字段或统计口径仍待确认`,
     "",
     section("公司整体"),
@@ -287,25 +296,36 @@ export async function renderWeeklyOperationsReport(
     ),
     "",
     section("项目部-费用控制目标"),
-    formatUnavailableKpi(
+    `口径：年化均摊 = 累计费用 / 累计机器人数量`,
+    formatNullableCostKpi(
       "初步方案设计费",
-      `目标 <= ${formatNumber(KPI_TARGETS.preliminaryDesignCost)} 元`,
+      getAnnualizedCost(annualizedCostItems, "初案设计费"),
+      KPI_TARGETS.preliminaryDesignCost,
+      costControlDataNote,
     ),
-    formatUnavailableKpi(
+    formatNullableCostKpi(
       "详细方案设计费",
-      `目标 <= ${formatNumber(KPI_TARGETS.detailedDesignCost)} 元`,
+      getAnnualizedCost(annualizedCostItems, "详案设计费"),
+      KPI_TARGETS.detailedDesignCost,
+      costControlDataNote,
     ),
-    formatUnavailableKpi(
+    formatNullableCostKpi(
       "安装调试费",
-      `目标 <= ${formatNumber(KPI_TARGETS.installationDebugCost)} 元`,
+      getAnnualizedCost(annualizedCostItems, "安装调试费"),
+      KPI_TARGETS.installationDebugCost,
+      costControlDataNote,
     ),
-    formatUnavailableKpi(
+    formatNullableCostKpi(
       "年化耗材更换费用",
-      `目标 <= ${formatNumber(KPI_TARGETS.annualConsumableCost)} 元`,
+      getAnnualizedCost(annualizedCostItems, "年化耗材更换费用"),
+      KPI_TARGETS.annualConsumableCost,
+      costControlDataNote,
     ),
-    formatUnavailableKpi(
+    formatNullableCostKpi(
       "年化故障处理费用",
-      `目标 <= ${formatNumber(KPI_TARGETS.annualFaultHandlingCost)} 元`,
+      getAnnualizedCost(annualizedCostItems, "年化故障处理费用"),
+      KPI_TARGETS.annualFaultHandlingCost,
+      costControlDataNote,
     ),
     "",
     section("项目部-质量目标"),
@@ -325,7 +345,7 @@ export async function renderWeeklyOperationsReport(
     section("项目部-时效目标"),
     `清扫质量巡检待办（涉及机器人）：${formatNumber(cleaningInspectionBacklog)}`,
     `清扫质量平均持续时间：${formatDays(brushBacklogDays)} 天（目标 <= ${formatNumber(KPI_TARGETS.brushBacklogDays)}天）`,
-    `待处理2级故障（条）：${formatNumber(fieldTodos.summary.faultCount)}`,
+    `待处理2级故障（涉及机器人）：${formatNumber(pendingLevelTwoFaultRobotCount)}`,
     `待处理2级故障平均持续时间（天）：${formatDays(pendingFaultDays)} 天（目标 <= ${formatNumber(KPI_TARGETS.pendingFaultDays)}天）`,
   ];
 
@@ -349,6 +369,55 @@ function sumFaultLevel(
 ): number {
   const level = items.find((item) => item.level === targetLevel);
   return (level?.data ?? []).reduce((sum, item) => sum + item.value, 0);
+}
+
+function sumLevelTwoFaultRobots(
+  faults: Array<{ level: string; robotName: string; robotCount?: number }>,
+): number {
+  const levelTwoFaults = faults.filter((item) => item.level === "2" || item.level === "2级");
+  const robotCount = levelTwoFaults.reduce((sum, item) => {
+    const count = finiteNumberOrNull(item.robotCount);
+    return sum + (count && count > 0 ? count : 0);
+  }, 0);
+
+  if (robotCount > 0) {
+    return robotCount;
+  }
+
+  return new Set(
+    levelTwoFaults.map((item) => item.robotName.trim()).filter((name) => name.length > 0),
+  ).size;
+}
+
+function buildAnnualizedCostItems(
+  items: Array<{ item: string; cost: number; robotCount: number }>,
+): Map<string, number> {
+  const grouped = new Map<string, { totalCost: number; totalRobotCount: number }>();
+  for (const item of items) {
+    const cost = finiteNumberOrNull(item.cost);
+    const robotCount = finiteNumberOrNull(item.robotCount);
+    if (cost === null || robotCount === null) {
+      continue;
+    }
+
+    const current = grouped.get(item.item) ?? { totalCost: 0, totalRobotCount: 0 };
+    current.totalCost += cost;
+    current.totalRobotCount += robotCount;
+    grouped.set(item.item, current);
+  }
+
+  const annualized = new Map<string, number>();
+  for (const [item, summary] of grouped.entries()) {
+    if (summary.totalRobotCount > 0) {
+      annualized.set(item, summary.totalCost / summary.totalRobotCount);
+    }
+  }
+
+  return annualized;
+}
+
+function getAnnualizedCost(items: Map<string, number>, itemName: string): number | null {
+  return finiteNumberOrNull(items.get(itemName));
 }
 
 function formatCountKpi(
@@ -412,6 +481,21 @@ function formatNullableThresholdNumberKpi(
   return actual === null
     ? formatUnavailableKpi(label, `目标 ${operator} ${formatNumber(target, 2)}`, unavailableNote)
     : formatThresholdNumberKpi(label, actual, target, operator);
+}
+
+function formatNullableCostKpi(
+  label: string,
+  actual: number | null,
+  target: number,
+  unavailableNote: string,
+): string {
+  return actual === null
+    ? formatUnavailableKpi(
+        label,
+        `目标 <= ${formatNumber(target, 2)} 元/台`,
+        unavailableNote,
+      )
+    : `${label}：${formatNumber(actual, 2)} 元/台（目标 <= ${formatNumber(target, 2)} 元/台）`;
 }
 
 function formatThresholdPercentKpi(

@@ -307,9 +307,32 @@ export type FieldTodosResponse = {
     siteId: string;
     siteName: string;
     robotName: string;
+    robotCount?: number;
     description: string;
   }>;
   todos: TodoListItem[];
+};
+
+export type CostControlResponse = {
+  summary: {
+    monthCount: number;
+    costItemCount: number;
+    totalCost: number;
+    activeRobotCount: number;
+    averageCostPerActiveRobot: number | null;
+  };
+  costItems: string[];
+  items: Array<{
+    id: string;
+    month: string;
+    monthLabel: string;
+    item: string;
+    cost: number;
+    robotCount: number;
+    averageCost: number | null;
+    denominatorType: string;
+    denominatorLabel: string;
+  }>;
 };
 
 export type CleaningQualityResponse = {
@@ -488,6 +511,10 @@ export class DasClient {
     return this.getJson<ContractManagementResponse>("/api/contract-management");
   }
 
+  async fetchCostControl(): Promise<CostControlResponse> {
+    return this.getJson<CostControlResponse>("/api/cost-control");
+  }
+
   async fetchInspectionStats(range: DateRange): Promise<InspectionStatsResponse> {
     return this.getJson<InspectionStatsResponse>("/api/inspection-stats", {
       start_at: range.startAt,
@@ -563,11 +590,17 @@ export class DasClient {
   private async requestJson<T>(path: string, init?: RequestInit): Promise<T> {
     const method = init?.method ?? "GET";
     const maxAttempts = method === "GET" ? 3 : 1;
+    const timeoutMs = getRequestTimeoutMs();
 
     let lastError: Error | null = null;
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), timeoutMs);
       try {
-        const response = await fetch(new URL(path, this.baseUrl), init);
+        const response = await fetch(new URL(path, this.baseUrl), {
+          ...init,
+          signal: controller.signal,
+        });
         if (!response.ok) {
           const message = `DAS 请求失败: ${method} ${path} | ${response.status} ${response.statusText}`;
           if (method === "GET" && response.status >= 500 && attempt < maxAttempts) {
@@ -585,17 +618,29 @@ export class DasClient {
 
         return payload.data;
       } catch (error) {
-        lastError = error instanceof Error ? error : new Error(String(error));
+        lastError =
+          error instanceof Error && error.name === "AbortError"
+            ? new Error(`DAS 请求超时: ${method} ${path} | ${timeoutMs}ms`)
+            : error instanceof Error
+              ? error
+              : new Error(String(error));
         if (attempt >= maxAttempts) {
           break;
         }
 
         await sleep(attempt * 500);
+      } finally {
+        clearTimeout(timeout);
       }
     }
 
     throw lastError ?? new Error(`DAS 请求失败: ${method} ${path}`);
   }
+}
+
+function getRequestTimeoutMs(): number {
+  const configured = Number(process.env.DAS_REQUEST_TIMEOUT_MS);
+  return Number.isFinite(configured) && configured > 0 ? configured : 30000;
 }
 
 function sleep(delayMs: number): Promise<void> {
