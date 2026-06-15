@@ -590,7 +590,7 @@ export class DasClient {
   private async requestJson<T>(path: string, init?: RequestInit): Promise<T> {
     const method = init?.method ?? "GET";
     const maxAttempts = method === "GET" ? 3 : 1;
-    const timeoutMs = getRequestTimeoutMs();
+    const timeoutMs = getRequestTimeoutMs(path);
 
     let lastError: Error | null = null;
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
@@ -638,7 +638,20 @@ export class DasClient {
   }
 }
 
-function getRequestTimeoutMs(): number {
+function getRequestTimeoutMs(path: string): number {
+  if (path.startsWith("/api/brush-stats")) {
+    const configured = Number(process.env.DAS_BRUSH_STATS_TIMEOUT_MS);
+    if (Number.isFinite(configured) && configured > 0) {
+      return configured;
+    }
+
+    return Math.max(getGeneralRequestTimeoutMs(), 90000);
+  }
+
+  return getGeneralRequestTimeoutMs();
+}
+
+function getGeneralRequestTimeoutMs(): number {
   const configured = Number(process.env.DAS_REQUEST_TIMEOUT_MS);
   return Number.isFinite(configured) && configured > 0 ? configured : 30000;
 }
