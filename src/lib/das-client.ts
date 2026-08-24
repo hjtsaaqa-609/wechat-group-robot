@@ -441,13 +441,24 @@ type JsonEnvelope<T> = {
 };
 
 export class DasClient {
+  private sessionCookie: string | null = null;
+
   constructor(
     private readonly baseUrl: string,
     private readonly username: string,
     private readonly password: string,
-  ) {}
+    private readonly internalToken?: string,
+  ) {
+    this.baseUrl = normalizeDasBaseUrl(baseUrl);
+    this.internalToken = internalToken?.trim() || undefined;
+  }
 
   async authenticate(): Promise<void> {
+    if (this.internalToken) {
+      return;
+    }
+
+    this.sessionCookie = null;
     const data = await this.postJson<{ username: string }>("/api/auth/login", {
       username: this.username,
       password: this.password,
@@ -455,6 +466,10 @@ export class DasClient {
 
     if (!data.username) {
       throw new Error("DAS 登录接口返回异常");
+    }
+
+    if (!this.sessionCookie) {
+      throw new Error("DAS 登录成功但未返回会话 Cookie");
     }
   }
 
@@ -597,10 +612,19 @@ export class DasClient {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), timeoutMs);
       try {
+        const headers = new Headers(init?.headers);
+        if (this.internalToken) {
+          headers.set("X-DAS-Internal-Token", this.internalToken);
+        } else if (this.sessionCookie) {
+          headers.set("Cookie", this.sessionCookie);
+        }
+
         const response = await fetch(new URL(path, this.baseUrl), {
           ...init,
+          headers,
           signal: controller.signal,
         });
+        this.captureSessionCookie(response.headers);
         if (!response.ok) {
           const message = `DAS 请求失败: ${method} ${path} | ${response.status} ${response.statusText}`;
           if (method === "GET" && response.status >= 500 && attempt < maxAttempts) {
@@ -636,6 +660,33 @@ export class DasClient {
 
     throw lastError ?? new Error(`DAS 请求失败: ${method} ${path}`);
   }
+
+  private captureSessionCookie(headers: Headers): void {
+    const extendedHeaders = headers as Headers & { getSetCookie?: () => string[] };
+    const setCookies =
+      typeof extendedHeaders.getSetCookie === "function"
+        ? extendedHeaders.getSetCookie()
+        : [headers.get("set-cookie")].filter((value): value is string => Boolean(value));
+    const rawCookie = setCookies.find((value) =>
+      value.trimStart().startsWith("das_auth_session="),
+    );
+    if (!rawCookie) {
+      return;
+    }
+
+    const cookiePair = rawCookie.split(";", 1)[0]?.trim() ?? "";
+    const value = cookiePair.slice("das_auth_session=".length);
+    this.sessionCookie = value ? cookiePair : null;
+  }
+}
+
+function normalizeDasBaseUrl(baseUrl: string): string {
+  const url = new URL(baseUrl);
+  if (url.protocol === "http:" && url.hostname === "das.i-pv.cn") {
+    url.protocol = "https:";
+  }
+
+  return url.toString();
 }
 
 function getRequestTimeoutMs(path: string): number {

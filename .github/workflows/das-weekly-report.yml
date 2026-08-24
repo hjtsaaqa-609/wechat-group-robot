@@ -34,9 +34,10 @@ jobs:
     timeout-minutes: 20
     env:
       TZ: Asia/Shanghai
-      DAS_BASE_URL: http://das.i-pv.cn
+      DAS_BASE_URL: https://das.i-pv.cn
       DAS_USERNAME: ${{ secrets.DAS_USERNAME }}
       DAS_PASSWORD: ${{ secrets.DAS_PASSWORD }}
+      DAS_INTERNAL_API_TOKEN: ${{ secrets.DAS_INTERNAL_API_TOKEN }}
       WECOM_WEBHOOK: ${{ secrets.WECOM_WEBHOOK }}
     steps:
       - name: Checkout repository

@@ -97,13 +97,19 @@ POST https://api.github.com/repos/hjtsaaqa-609/wechat-group-robot/actions/workfl
 
 依次新增：
 
+- `DAS_INTERNAL_API_TOKEN`（推荐，DAS 自动化专用 Token）
+- `WECOM_WEBHOOK`
+
+如暂未配置 `DAS_INTERNAL_API_TOKEN`，则需继续配置：
+
 - `DAS_USERNAME`
 - `DAS_PASSWORD`
-- `WECOM_WEBHOOK`
 
 说明：
 
-- `DAS_BASE_URL` 在当前工作流中固定使用 `http://das.i-pv.cn`
+- `DAS_BASE_URL` 在当前工作流中固定使用 `https://das.i-pv.cn`
+- 用户名密码模式会在内存中保存 DAS 返回的 HttpOnly 会话 Cookie，不写入日志或文件
+- 配置 `DAS_INTERNAL_API_TOKEN` 后，周报客户端优先使用 `x-das-internal-token` 请求头，不再执行用户名密码登录
 - 如果后续 DAS 域名变化，再修改工作流即可
 
 ## 需要确认的仓库设置

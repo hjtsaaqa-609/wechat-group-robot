@@ -30,10 +30,15 @@ async function main(): Promise<void> {
   const defaultTimezone = config.timezone ?? "Asia/Shanghai";
 
   const baseUrl = requiredEnv("DAS_BASE_URL");
-  const username = requiredEnv("DAS_USERNAME");
-  const password = requiredEnv("DAS_PASSWORD");
+  const internalToken = optionalEnv("DAS_INTERNAL_API_TOKEN");
+  const username = internalToken
+    ? optionalEnv("DAS_USERNAME") ?? ""
+    : requiredEnv("DAS_USERNAME");
+  const password = internalToken
+    ? optionalEnv("DAS_PASSWORD") ?? ""
+    : requiredEnv("DAS_PASSWORD");
 
-  const client = new DasClient(baseUrl, username, password);
+  const client = new DasClient(baseUrl, username, password, internalToken);
   const stateStore = new ReportStateStore("data/report-state.json");
   const jobs = config.jobs.filter((job) => job.enabled !== false);
   const selectedJobs = options.job
@@ -276,6 +281,10 @@ function requiredEnv(name: string): string {
     throw new Error(`缺少环境变量 ${name}`);
   }
   return value;
+}
+
+function optionalEnv(name: string): string | undefined {
+  return process.env[name]?.trim() || undefined;
 }
 
 function pickJitterDelayMs(jitterSeconds: number): number {
